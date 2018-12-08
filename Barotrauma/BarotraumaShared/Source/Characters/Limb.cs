@@ -57,7 +57,7 @@ namespace Barotrauma
 
         public bool inWater;
 
-        public FixedMouseJoint pullJoint;
+        private readonly FixedMouseJoint pullJoint;
 
         public readonly LimbType type;
 
@@ -145,7 +145,53 @@ namespace Barotrauma
         {
             get { return stepOffset; }
         }
+
+        public bool PullJointEnabled
+        {
+            get { return pullJoint.Enabled; }
+            set { pullJoint.Enabled = value; }
+        }
+
+        public float PullJointMaxForce
+        {
+            get { return pullJoint.MaxForce; }
+            set { pullJoint.MaxForce = value; }
+        }
+
+        public Vector2 PullJointWorldAnchorA
+        {
+            get { return pullJoint.WorldAnchorA; }
+        }
         
+        public Vector2 PullJointWorldAnchorB
+        {
+            get { return pullJoint.WorldAnchorB; }
+            set
+            {                
+                if (!MathUtils.IsValid(value))
+                {
+                    string errorMsg = "Attempted to set the anchor of a limb's pull joint to an invalid value (" + value + ")\n" + Environment.StackTrace;
+                    DebugConsole.ThrowError(errorMsg);
+                    GameAnalyticsManager.AddErrorEventOnce("Limb.SetPullJointAnchor:InvalidValue", GameAnalyticsSDK.Net.EGAErrorSeverity.Error, errorMsg);
+                    return;
+                }
+
+
+                if (Vector2.DistanceSquared(pullJoint.WorldAnchorA, value) > 50.0f * 50.0f)
+                {
+                    Vector2 diff = value - pullJoint.WorldAnchorA;
+                    string errorMsg = "Attempted to move the anchor of a limb's pull joint extremely far from the limb (diff: " + diff +
+                        ", limb enabled: " + body.Enabled +
+                        ", simple physics enabled: " + character.AnimController.SimplePhysicsEnabled + ")\n"
+                        + Environment.StackTrace;
+                    DebugConsole.ThrowError(errorMsg);
+                    GameAnalyticsManager.AddErrorEventOnce("Limb.SetPullJointAnchor:ExcessiveValue", GameAnalyticsSDK.Net.EGAErrorSeverity.Error, errorMsg);
+                    return;
+                }
+
+                pullJoint.WorldAnchorB = value;                
+            }
+        }
         public List<WearableSprite> WearingItems { get; private set; }
 
         public Limb (Character character, XElement element, float scale = 1.0f)
@@ -208,9 +254,11 @@ namespace Barotrauma
                 type = LimbType.None;
             }
 
-            pullJoint = new FixedMouseJoint(body.FarseerBody, pullJointPos);
-            pullJoint.Enabled = false;
-            pullJoint.MaxForce = ((type == LimbType.LeftHand || type == LimbType.RightHand) ? 400.0f : 150.0f) * body.Mass;
+            pullJoint = new FixedMouseJoint(body.FarseerBody, pullJointPos)
+            {
+                Enabled = false,
+                MaxForce = ((type == LimbType.LeftHand || type == LimbType.RightHand) ? 400.0f : 150.0f) * body.Mass
+            };
 
             GameMain.World.AddJoint(pullJoint);
 
@@ -286,10 +334,10 @@ namespace Barotrauma
         }
         partial void InitProjSpecific(XElement element);
 
-        public void MoveToPos(Vector2 pos, float force, bool pullFromCenter=false)
+        public void MoveToPos(Vector2 pos, float force, bool pullFromCenter = false)
         {
             Vector2 pullPos = body.SimPosition;
-            if (pullJoint != null && !pullFromCenter)
+            if (!pullFromCenter)
             {
                 pullPos = pullJoint.WorldAnchorA;
             }
@@ -299,6 +347,11 @@ namespace Barotrauma
             body.MoveToPos(pos, force, pullPos);
         }
 
+        public void MirrorPullJoint()
+        {
+            pullJoint.LocalAnchorA = new Vector2(-pullJoint.LocalAnchorA.X, pullJoint.LocalAnchorA.Y);
+        }
+        
         public AttackResult AddDamage(Vector2 position, DamageType damageType, float amount, float bleedingAmount, bool playSound)
         {
             List<DamageModifier> appliedDamageModifiers = new List<DamageModifier>();
@@ -393,28 +446,34 @@ namespace Barotrauma
             body.ApplyTorque(Mass * character.AnimController.Dir * attack.Torque);
 
             bool wasHit = false;
-
             if (damageTarget != null)
             {
                 switch (attack.HitDetectionType)
                 {
                     case HitDetection.Distance:
-                        wasHit = dist < attack.DamageRange;
+                        if (dist < attack.DamageRange)
+                        {
+                            List<Body> ignoredBodies = character.AnimController.Limbs.Select(l => l.body.FarseerBody).ToList();
+                            ignoredBodies.Add(character.AnimController.Collider.FarseerBody);
+
+                            var body = Submarine.PickBody(
+                                SimPosition, attackPosition,
+                                ignoredBodies, Physics.CollisionWall);
+
+                            wasHit = body == null;
+                        }
                         break;
                     case HitDetection.Contact:
                         List<Body> targetBodies = new List<Body>();
-                        if (damageTarget is Character)
+                        if (damageTarget is Character targetCharacter)
                         {
-                            Character targetCharacter = (Character)damageTarget;
                             foreach (Limb limb in targetCharacter.AnimController.Limbs)
                             {
                                 if (!limb.IsSevered && limb.body?.FarseerBody != null) targetBodies.Add(limb.body.FarseerBody);
                             }
                         }
-                        else if (damageTarget is Structure)
+                        else if (damageTarget is Structure targetStructure)
                         {
-                            Structure targetStructure = (Structure)damageTarget;
-                            
                             if (character.Submarine == null && targetStructure.Submarine != null)
                             {
                                 targetBodies.Add(targetStructure.Submarine.PhysicsBody.FarseerBody);
@@ -429,7 +488,7 @@ namespace Barotrauma
                             Item targetItem = damageTarget as Item;
                             if (targetItem.body?.FarseerBody != null) targetBodies.Add(targetItem.body.FarseerBody);
                         }
-                        
+
                         if (targetBodies != null)
                         {
                             ContactEdge contactEdge = body.FarseerBody.ContactList;

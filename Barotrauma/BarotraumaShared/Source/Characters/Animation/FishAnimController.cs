@@ -59,8 +59,11 @@ namespace Barotrauma
 
                 if (character.IsRemotePlayer)
                 {
-                    MainLimb.pullJoint.WorldAnchorB = Collider.SimPosition;
-                    MainLimb.pullJoint.Enabled = true;
+                    if (!SimplePhysicsEnabled)
+                    {
+                        MainLimb.PullJointWorldAnchorB = Collider.SimPosition;
+                        MainLimb.PullJointEnabled = true;
+                    }
                 }
                 else
                 {
@@ -127,6 +130,9 @@ namespace Barotrauma
 
                 UpdateWalkAnim(deltaTime);
             }
+
+            //don't flip or drag when simply physics is enabled
+            if (SimplePhysicsEnabled) { return; }
             
             if (!character.IsRemotePlayer)
             {
@@ -254,12 +260,18 @@ namespace Barotrauma
 
         void UpdateSineAnim(float deltaTime)
         {
-            movement = TargetMovement*swimSpeed;
-            
-            MainLimb.pullJoint.Enabled = true;
-            MainLimb.pullJoint.WorldAnchorB = Collider.SimPosition;
+            movement = TargetMovement * swimSpeed;
+
+            Collider.LinearVelocity = Vector2.Lerp(Collider.LinearVelocity, movement, 0.5f);
+
+            //limbs are disabled when simple physics is enabled, no need to move them
+            if (SimplePhysicsEnabled) { return; }
+
+            MainLimb.PullJointEnabled = true;
+            MainLimb.PullJointWorldAnchorB = Collider.SimPosition;
 
             if (movement.LengthSquared() < 0.00001f) return;
+
 
             float movementAngle = MathUtils.VectorToAngle(movement) - MathHelper.PiOver2;
             
@@ -289,19 +301,24 @@ namespace Barotrauma
             {
                 if (Limbs[i].SteerForce <= 0.0f) continue;
 
-                Vector2 pullPos = Limbs[i].pullJoint == null ? Limbs[i].SimPosition : Limbs[i].pullJoint.WorldAnchorA;
+                Vector2 pullPos = Limbs[i].PullJointWorldAnchorA;
                 Limbs[i].body.ApplyForce(movement * Limbs[i].SteerForce * Limbs[i].Mass, pullPos);
             }
-            
-            Collider.LinearVelocity = Vector2.Lerp(Collider.LinearVelocity, movement, 0.5f);
-                
+                            
             floorY = Limbs[0].SimPosition.Y;            
         }
             
         void UpdateWalkAnim(float deltaTime)
         {
             movement = MathUtils.SmoothStep(movement, TargetMovement * walkSpeed, 0.2f);
-            
+
+            Collider.LinearVelocity = new Vector2(
+                movement.X,
+                Collider.LinearVelocity.Y > 0.0f ? Collider.LinearVelocity.Y * 0.5f : Collider.LinearVelocity.Y);
+
+            //limbs are disabled when simple physics is enabled, no need to move them
+            if (SimplePhysicsEnabled) { return; }
+
             float mainLimbHeight, mainLimbAngle;
             if (MainLimb.type == LimbType.Torso)
             {
@@ -314,16 +331,12 @@ namespace Barotrauma
                 mainLimbAngle = headAngle;
             }
 
-            MainLimb.body.SmoothRotate(mainLimbAngle * Dir, 50.0f);
-            
-            Collider.LinearVelocity = new Vector2(
-                movement.X,
-                Collider.LinearVelocity.Y > 0.0f ? Collider.LinearVelocity.Y * 0.5f : Collider.LinearVelocity.Y);
+            MainLimb.body.SmoothRotate(mainLimbAngle * Dir, 50.0f);            
 
             MainLimb.MoveToPos(GetColliderBottom() + Vector2.UnitY * mainLimbHeight, 10.0f);
             
-            MainLimb.pullJoint.Enabled = true;
-            MainLimb.pullJoint.WorldAnchorB = GetColliderBottom() + Vector2.UnitY * mainLimbHeight;
+            MainLimb.PullJointEnabled = true;
+            MainLimb.PullJointWorldAnchorB = GetColliderBottom() + Vector2.UnitY * mainLimbHeight;
 
             walkPos -= MainLimb.LinearVelocity.X * 0.05f;
 
@@ -387,9 +400,27 @@ namespace Barotrauma
 
             foreach (Limb limb in Limbs)
             {
-                if (limb.type == LimbType.Head || limb.type == LimbType.Tail || limb.IsSevered) continue;
+                if (limb.type == LimbType.Head || limb.type == LimbType.Tail || limb.IsSevered || !limb.body.Enabled) continue;
+                if (limb.Mass <= 0.0f)
+                {
+                    string errorMsg = "Creature death animation error: invalid limb mass on character \"" + character.SpeciesName + "\" (type: " + limb.type + ", mass: " + limb.Mass + ")";
+                    DebugConsole.ThrowError(errorMsg);
+                    GameAnalyticsManager.AddErrorEventOnce("FishAnimController.UpdateDying:InvalidMass" + character.ID, GameAnalyticsSDK.Net.EGAErrorSeverity.Error, errorMsg);
+                    deathAnimTimer = deathAnimDuration;
+                    return;
+                }
 
-                limb.body.ApplyForce((centerOfMass - limb.SimPosition) * (float)(Math.Sin(walkPos) * Math.Sqrt(limb.Mass)) * 10.0f);
+                Vector2 diff = (centerOfMass - limb.SimPosition);
+                if (!MathUtils.IsValid(diff))
+                {
+                    string errorMsg = "Creature death animation error: invalid diff (center of mass: " + centerOfMass + ", limb position: " + limb.SimPosition + ")";
+                    DebugConsole.ThrowError(errorMsg);
+                    GameAnalyticsManager.AddErrorEventOnce("FishAnimController.UpdateDying:InvalidDiff" + character.ID, GameAnalyticsSDK.Net.EGAErrorSeverity.Error, errorMsg);
+                    deathAnimTimer = deathAnimDuration;
+                    return;
+                }
+
+                limb.body.ApplyForce(diff * (float)(Math.Sin(walkPos) * Math.Sqrt(limb.Mass)) * 10.0f);
             }
         }
 

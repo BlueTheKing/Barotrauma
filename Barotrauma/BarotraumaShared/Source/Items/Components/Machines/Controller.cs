@@ -142,17 +142,16 @@ namespace Barotrauma.Items.Components
             foreach (LimbPos lb in limbPositions)
             {
                 Limb limb = character.AnimController.GetLimb(lb.limbType);
-                if (limb == null) continue;
+                if (limb == null || !limb.body.Enabled) continue;
 
                 limb.Disabled = true;
+                
+                Vector2 worldPosition = lb.position + new Vector2(item.WorldRect.X, item.WorldRect.Y);
+                Vector2 diff = worldPosition - limb.WorldPosition;
 
-                if (limb.pullJoint == null) continue;
-
-                Vector2 position = ConvertUnits.ToSimUnits(lb.position + new Vector2(item.Rect.X, item.Rect.Y));
-                limb.pullJoint.Enabled = true;
-                limb.pullJoint.WorldAnchorB = position;
-            }
-            
+                limb.PullJointEnabled = true;
+                limb.PullJointWorldAnchorB = limb.SimPosition + ConvertUnits.ToSimUnits(diff);
+            }            
         }
 
         public override bool Use(float deltaTime, Character activator = null)
@@ -276,8 +275,7 @@ namespace Barotrauma.Items.Components
                 if (limb == null) continue;
 
                 limb.Disabled = false;
-
-                limb.pullJoint.Enabled = false;
+                limb.PullJointEnabled = false;
             }
 
             if (character.SelectedConstruction == this.item) character.SelectedConstruction = null;

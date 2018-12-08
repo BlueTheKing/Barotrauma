@@ -20,7 +20,8 @@ namespace Barotrauma
         OnWearing, OnContaining, OnContained, 
         OnActive, OnFailure, OnBroken, 
         OnFire, InWater,
-        OnImpact
+        OnImpact, 
+        OnEating
     }
 
     partial class Item : MapEntity, IDamageable, ISerializableEntity, IServerSerializable, IClientSerializable
@@ -959,6 +960,7 @@ namespace Barotrauma
             if (ImpactTolerance > 0.0f && impact > ImpactTolerance)
             {
                 ApplyStatusEffects(ActionType.OnImpact, 1.0f);
+                GameMain.Server?.CreateEntityEvent(this, new object[] { NetEntityEvent.Type.ApplyStatusEffect, ActionType.OnImpact });
             }
 
             var containedItems = ContainedItems;

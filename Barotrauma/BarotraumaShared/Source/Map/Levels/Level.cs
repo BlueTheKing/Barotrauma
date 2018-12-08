@@ -128,6 +128,16 @@ namespace Barotrauma
             get { return seed; }
         }
 
+        /// <summary>
+        /// A random integer assigned at the end of level generation. If these values differ between clients/server,
+        /// it means the levels aren't identical for some reason and there will most likely be major ID mismatches.
+        /// </summary>
+        public int EqualityCheckVal
+        {
+            get;
+            private set;
+        }
+
         public float Difficulty
         {
             get;
@@ -356,7 +366,7 @@ namespace Barotrauma
             foreach (InterestingPosition positionOfInterest in positionsOfInterest)
             {
                 WayPoint wayPoint = new WayPoint(
-                    mirror ? new Vector2(borders.X - positionOfInterest.Position.X, positionOfInterest.Position.Y) : positionOfInterest.Position,
+                    positionOfInterest.Position,
                     SpawnType.Enemy,
                     submarine: null);
             }
@@ -477,6 +487,12 @@ namespace Barotrauma
                         positionsOfInterest[i].PositionType);
                 }
 
+                foreach (WayPoint waypoint in WayPoint.WayPointList)
+                {
+                    if (waypoint.Submarine != null) continue;
+                    waypoint.Move(new Vector2((borders.Width / 2 - waypoint.Position.X) * 2, 0.0f));
+                }
+
                 startPosition.X = borders.Width - startPosition.X;
                 endPosition.X = borders.Width - endPosition.X;
             }
@@ -499,7 +515,7 @@ namespace Barotrauma
             ruins = new List<Ruin>();
             for (int i = 0; i < generationParams.RuinCount; i++)
             {
-                GenerateRuin(mainPath, mirror);
+                GenerateRuin(mainPath, this, mirror);
             }
             
             //----------------------------------------------------------------------------------
@@ -532,6 +548,9 @@ namespace Barotrauma
             GenerateSeaFloor(mirror);
 
             backgroundSpriteManager.PlaceSprites(this, generationParams.BackgroundSpriteAmount);
+
+            EqualityCheckVal = Rand.Int(int.MaxValue, Rand.RandSync.Server);
+
 #if CLIENT
             backgroundCreatureManager.SpawnSprites(80);
 #endif
@@ -587,7 +606,7 @@ namespace Barotrauma
                 {
                     if (wp.SpawnType != SpawnType.Path) continue;
 
-                    float dist =Math.Abs(cell.Center.X - wp.WorldPosition.X);
+                    float dist = Math.Abs(cell.Center.X - wp.WorldPosition.X);
                     if (closestWayPoint == null || dist < closestDist)
                     {
                         closestDist = dist;
@@ -877,7 +896,7 @@ namespace Barotrauma
             return tunnelNodes;
         }
 
-        private void GenerateRuin(List<VoronoiCell> mainPath, bool mirror)
+        private void GenerateRuin(List<VoronoiCell> mainPath, Level level, bool mirror)
         {
             Vector2 ruinSize = new Vector2(Rand.Range(5000.0f, 8000.0f, Rand.RandSync.Server), Rand.Range(5000.0f, 8000.0f, Rand.RandSync.Server));
             float ruinRadius = Math.Max(ruinSize.X, ruinSize.Y) * 0.5f;
@@ -898,7 +917,8 @@ namespace Barotrauma
             float minDistSqr = minDist * minDist;
             
             int iter = 0;
-            while (mainPath.Any(p => Vector2.DistanceSquared(ruinPos, p.Center) < minDistSqr))
+            while (mainPath.Any(p => Vector2.DistanceSquared(ruinPos, p.Center) < minDistSqr) ||
+                ruins.Any(r => r.Area.Intersects(new Rectangle(MathUtils.ToPoint(ruinPos - ruinSize / 2), MathUtils.ToPoint(ruinSize)))))
             {
                 Vector2 weighedPathPos = ruinPos;
                 iter++;
@@ -915,12 +935,27 @@ namespace Barotrauma
                     if (distSqr > 10000.0f * 10000.0f) continue;
 
                     Vector2 moveAmount = Vector2.Normalize(diff) * 100000.0f / (float)Math.Sqrt(distSqr);
-                    
+
                     weighedPathPos += moveAmount;
                     weighedPathPos.Y = Math.Min(borders.Y + borders.Height - ruinSize.Y / 2, weighedPathPos.Y);
                 }
+                Rectangle ruinArea = new Rectangle(MathUtils.ToPoint(ruinPos - ruinSize / 2), MathUtils.ToPoint(ruinSize));
+                foreach (Ruin otherRuin in ruins)
+                {
+                    if (!otherRuin.Area.Intersects(ruinArea)) continue;
 
+                    Vector2 diff = (ruinArea.Center - otherRuin.Area.Center).ToVector2();
+                    if (diff.LengthSquared() < 0.01f) { diff = -Vector2.UnitY; }
+                    weighedPathPos += Vector2.Normalize(diff) *
+                        (Math.Max(ruinArea.Width, ruinArea.Height) + Math.Max(otherRuin.Area.Width, otherRuin.Area.Height)) / 2.0f;
+                }
+                
                 ruinPos = weighedPathPos;
+                if (ruinPos.Y + ruinSize.Y / 2.0f > level.Size.Y)
+                {
+                    ruinPos.Y -= ((ruinPos.Y + ruinSize.Y / 2.0f) - level.Size.Y);
+                }
+
                 if (iter > 10000) break;
             }
 

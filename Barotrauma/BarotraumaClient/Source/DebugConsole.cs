@@ -163,7 +163,15 @@ namespace Barotrauma
             while (queuedMessages.Count > 0)
             {
                 var newMsg = queuedMessages.Dequeue();
-                AddMessage(newMsg);
+                if (listBox == null)
+                {
+                    //don't attempt to add to the listbox if it hasn't been created yet                    
+                    Messages.Add(newMsg);
+                }
+                else
+                {
+                    AddMessage(newMsg);
+                }
 
                 if (GameSettings.SaveDebugConsoleLogs) unsavedMessages.Add(newMsg);
             }
@@ -384,7 +392,11 @@ namespace Barotrauma
             {
                 GameMain.DebugDraw = !GameMain.DebugDraw;
                 NewMessage("Debug draw mode " + (GameMain.DebugDraw ? "enabled" : "disabled"), Color.White);
-
+            }));
+            commands.Add(new Command("fpscounter", "fpscounter: Toggle the FPS counter.", (string[] args) =>
+            {
+                GameMain.ShowFPS = !GameMain.ShowFPS;
+                NewMessage("FPS counter " + (GameMain.DebugDraw ? "enabled" : "disabled"), Color.White);
             }));
 
             commands.Add(new Command("togglehud|hud", "togglehud/hud: Toggle the character HUD (inventories, icons, buttons, etc) on/off.", (string[] args) =>

@@ -313,7 +313,7 @@ namespace Barotrauma
             get { return oxygen; }
             set
             {
-                if (!MathUtils.IsValid(value)) return;
+                if (!MathUtils.IsValid(value) || !needsAir) return;
                 oxygen = MathHelper.Clamp(value, -100.0f, 100.0f);
                 if (oxygen == -100.0f) Kill(AnimController.InWater ? CauseOfDeath.Drowning : CauseOfDeath.Suffocation);
             }
@@ -1358,15 +1358,7 @@ namespace Barotrauma
         public void DeselectCharacter()
         {
             if (SelectedCharacter == null) return;
-
-            if (SelectedCharacter.AnimController != null)
-            {
-                foreach (Limb limb in SelectedCharacter.AnimController.Limbs)
-                {
-                    if (limb.pullJoint != null) limb.pullJoint.Enabled = false;
-                }
-            }
-
+            SelectedCharacter.AnimController?.ResetPullJoints();
             SelectedCharacter = null;
         }
 
@@ -1908,13 +1900,21 @@ namespace Barotrauma
         public void BreakJoints()
         {
             Vector2 centerOfMass = AnimController.GetCenterOfMass();
-
             foreach (Limb limb in AnimController.Limbs)
             {
                 limb.AddDamage(limb.SimPosition, DamageType.Blunt, 500.0f, 0.0f, false);
 
                 Vector2 diff = centerOfMass - limb.SimPosition;
-                if (diff == Vector2.Zero) continue;
+
+                if (!MathUtils.IsValid(diff))
+                {
+                    string errorMsg = "Attempted to apply an invalid impulse to a limb in Character.BreakJoints (" + diff + "). Limb position: " + limb.SimPosition + ", center of mass: " + centerOfMass + ".";
+                    DebugConsole.ThrowError(errorMsg);
+                    GameAnalyticsManager.AddErrorEventOnce("Ragdoll.GetCenterOfMass", GameAnalyticsSDK.Net.EGAErrorSeverity.Error, errorMsg);
+                    return;
+                }
+
+                if (diff == Vector2.Zero) { continue; }
                 limb.body.ApplyLinearImpulse(diff * 50.0f);
             }
 
@@ -1977,11 +1977,7 @@ namespace Barotrauma
                 if (selectedItems[i] != null) selectedItems[i].Drop(this);            
             }
             
-            foreach (Limb limb in AnimController.Limbs)
-            {
-                if (limb.pullJoint == null) continue;
-                limb.pullJoint.Enabled = false;
-            }
+            AnimController.ResetPullJoints();
 
             foreach (RevoluteJoint joint in AnimController.LimbJoints)
             {
